@@ -27,6 +27,19 @@ def fetch_data(endpoint, params=None):
         st.error(f"Error connecting to backend: {e}")
         return None
 
+# File uploader in the sidebar
+st.sidebar.header("Upload Reports")
+uploaded_file = st.sidebar.file_uploader("Choose a CSV file", type="csv")
+
+if uploaded_file:
+    try:
+        files = {"file": uploaded_file.getvalue()}
+        response = requests.post(f"{BACKEND_URL}/upload/", files=files)
+        response.raise_for_status()
+        st.success(f"File uploaded successfully: {uploaded_file.name}")
+    except requests.exceptions.RequestException as e:
+        st.error(f"Error uploading file: {e}")
+
 # Get filter options
 filters = fetch_data("filters") or {"lip": [], "constituency": [], "ward": []}
 
@@ -60,7 +73,7 @@ if st.sidebar.button("Apply Filters"):
                                     )
                                 )
                 
-              # OVC Eligible for Reporting Summaries
+            # OVC Eligible for Reporting Summaries
             if "category_summary" in summary_data:
                 st.subheader("OVC Eligible for Reporting Summaries")
                 df_summary = pd.DataFrame([

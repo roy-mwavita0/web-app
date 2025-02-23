@@ -1,35 +1,54 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 import numpy as np
 import janitor
+from io import BytesIO
 
 app = FastAPI()
 
-# Load data
-DATA_PATH = "D:/M&E/Reports/ip-RegistrationList.22022025.csv"
-registration_df = (
-    pd.read_csv(DATA_PATH)
-    .clean_names()
-    .query("void_person != 'VOIDED'")  # Remove voided persons
-    .assign(
-        lip=lambda x: np.select(
-            [
-                x['cbo'].str.contains('AMURT', case=False, na=False),
-                x['cbo'].str.contains('CIPK', case=False, na=False),
-                x['cbo'].str.contains('KWETU', case=False, na=False)
-            ],
-            ['AMURT', 'CIPK', 'KWETU'],
-            default='WOFAK'
+# Allow all origins to access this API (for development purposes)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Store data in-memory for simplicity
+registration_df = pd.DataFrame()
+
+@app.post("/upload/")
+async def upload_file(file: UploadFile = File(...)):
+    global registration_df
+    try:
+        # Read uploaded file into DataFrame
+        contents = await file.read()
+        registration_df = pd.read_csv(BytesIO(contents)).clean_names()
+        registration_df = (
+            registration_df
+            .query("void_person != 'VOIDED'")  # Remove voided persons
+            .assign(
+                lip=lambda x: np.select(
+                    [
+                        x['cbo'].str.contains('AMURT', case=False, na=False),
+                        x['cbo'].str.contains('CIPK', case=False, na=False),
+                        x['cbo'].str.contains('KWETU', case=False, na=False)
+                    ],
+                    ['AMURT', 'CIPK', 'KWETU'],
+                    default='WOFAK'
+                )
+            )
         )
-    )
-)
-
-registration_df = registration_df.assign(
-    exit_date = pd.to_datetime(registration_df['exit_date'], errors='coerce'),
-    registration_date = pd.to_datetime(registration_df['registration_date'], errors='coerce'),
-    age = pd.to_numeric(registration_df['age'], errors='coerce')
-)
-
+        registration_df = registration_df.assign(
+            exit_date=pd.to_datetime(registration_df['exit_date'], errors='coerce'),
+            registration_date=pd.to_datetime(registration_df['registration_date'], errors='coerce'),
+            age=pd.to_numeric(registration_df['age'], errors='coerce')
+        )
+        return {"status": "success", "filename": file.filename}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error uploading file: {str(e)}")
 
 @app.get("/filters/")
 def get_filters():
@@ -99,50 +118,41 @@ def get_summaries(
         exit_reasons = exited_ovc['exit_reason'].value_counts().to_dict()
 
         # HIV Status
-
         hivstatus_summary = active_ovc['ovchivstatus'].value_counts().to_dict()
-
 
         # Birth Certificate Uptake
         birth_cert_uptake = active_ovc['birthcert'].value_counts().to_dict()
 
-         # Reporting Category
+        # Reporting Category
         total_ovc_count = len(active_ovc)
-
         total_ovc_above_5 = len(active_ovc[active_ovc['age'] > 5])
-
         ovc_has_birth = active_ovc[active_ovc['birthcert'] == 'HAS BIRTHCERT']
-
         ovc_has_disability = active_ovc[active_ovc['ovcdisability'] == 'HAS DISABILITY']
-
         ovc_schoolgoing = active_ovc[
             (active_ovc['schoollevel'] != 'Not in School') & (active_ovc['age'] > 5)
         ]
 
         category_summary = {
             "Has Birth Certificate": {
-            "Count": len(ovc_has_birth),
-            "Percentage": f"{round(len(ovc_has_birth) / total_ovc_count * 100):.0f}%"
+                "Count": len(ovc_has_birth),
+                "Percentage": f"{round(len(ovc_has_birth) / total_ovc_count * 100):.0f}%"
             },
             "School Going": {
-            "Count": len(ovc_schoolgoing),
-            "Percentage": f"{round(len(ovc_schoolgoing) / total_ovc_above_5 * 100):.0f}%"
+                "Count": len(ovc_schoolgoing),
+                "Percentage": f"{round(len(ovc_schoolgoing) / total_ovc_above_5 * 100):.0f}%"
             },
-           "Has Disability": {
-           "Count": len(ovc_has_disability),
-           "Percentage": f"{round(len(ovc_has_disability) / total_ovc_count * 100):.0f}%"
-           },
+            "Has Disability": {
+                "Count": len(ovc_has_disability),
+                "Percentage": f"{round(len(ovc_has_disability) / total_ovc_count * 100):.0f}%"
+            },
         }
 
-
-
-# Return
         return {
             "exit_reasons": exit_reasons,
             "birth_cert_uptake": birth_cert_uptake,
             "reporting_summary": reporting_summary,
             "hivstatus_summary": hivstatus_summary,
-            "category_summary" : category_summary
+            "category_summary": category_summary
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing data: {str(e)}")
