@@ -1,58 +1,161 @@
 from fastapi import FastAPI, HTTPException, Query, UploadFile, File
-from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 import numpy as np
 import janitor
-from io import BytesIO
+from fastapi.middleware.cors import CORSMiddleware
+import io
 
 app = FastAPI()
 
-# Allow all origins to access this API (for development purposes)
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Allow all origins
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"],  # Allow all methods
+    allow_headers=["*"],  # Allow all headers
 )
 
-# Store data in-memory for simplicity
-registration_df = pd.DataFrame()
+# Global variables to store the uploaded data
+registration_df = None
+viral_load_df = None
 
 @app.post("/upload/")
 async def upload_file(file: UploadFile = File(...)):
+    """Endpoint to upload the registration list file."""
     global registration_df
     try:
-        # Read uploaded file into DataFrame
-        contents = await file.read()
-        registration_df = pd.read_csv(BytesIO(contents)).clean_names()
-        registration_df = (
-            registration_df
-            .query("void_person != 'VOIDED'")  # Remove voided persons
-            .assign(
-                lip=lambda x: np.select(
-                    [
-                        x['cbo'].str.contains('AMURT', case=False, na=False),
-                        x['cbo'].str.contains('CIPK', case=False, na=False),
-                        x['cbo'].str.contains('KWETU', case=False, na=False)
-                    ],
-                    ['AMURT', 'CIPK', 'KWETU'],
-                    default='WOFAK'
+        if file.filename.endswith('.csv'):
+            # Read the file content
+            content = await file.read()
+            df = pd.read_csv(io.StringIO(content.decode('utf-8')))
+            registration_df = (
+                df.clean_names()
+                .query("void_person != 'VOIDED'")  # Remove voided persons
+                .assign(
+                    lip=lambda x: np.select(
+                        [
+                            x['cbo'].str.contains('AMURT', case=False, na=False),
+                            x['cbo'].str.contains('CIPK', case=False, na=False),
+                            x['cbo'].str.contains('KWETU', case=False, na=False)
+                        ],
+                        ['AMURT', 'CIPK', 'KWETU'],
+                        default='WOFAK'
+                    )
                 )
             )
-        )
-        registration_df = registration_df.assign(
-            exit_date=pd.to_datetime(registration_df['exit_date'], errors='coerce'),
-            registration_date=pd.to_datetime(registration_df['registration_date'], errors='coerce'),
-            age=pd.to_numeric(registration_df['age'], errors='coerce')
-        )
-        return {"status": "success", "filename": file.filename}
+            registration_df = registration_df.assign(
+                exit_date=pd.to_datetime(registration_df['exit_date'], errors='coerce'),
+                registration_date=pd.to_datetime(registration_df['registration_date'], errors='coerce'),
+                date_of_event=pd.to_datetime(registration_df['date_of_event'], errors='coerce'),
+                age=pd.to_numeric(registration_df['age'], errors='coerce'),
+                viral_load=pd.to_numeric(registration_df['viral_load'], errors='coerce')
+            )
+            return {"message": "File uploaded and processed successfully."}
+        else:
+            raise HTTPException(status_code=400, detail="Invalid file format. Please upload a CSV file.")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error uploading file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
+
+@app.post("/upload-viral-load/")
+async def upload_viral_load(file: UploadFile = File(...)):
+    """Endpoint to upload the viral load report file."""
+    global viral_load_df
+    try:
+        if file.filename.endswith('.csv'):
+            # Read the file content
+            content = await file.read()
+            viral_load_df = pd.read_csv(io.StringIO(content.decode('utf-8')))
+            viral_load_df = viral_load_df.clean_names()  # Clean column names
+
+            viral_load_df = viral_load_df.assign(
+                date_of_event=pd.to_datetime(viral_load_df['date_of_event'], errors='coerce'),
+                viral_load=pd.to_numeric(viral_load_df['viral_load'], errors='coerce')
+            )
+
+            return {"message": "Viral load file uploaded and processed successfully."}
+        else:
+            raise HTTPException(status_code=400, detail="Invalid file format. Please upload a CSV file.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing viral load file: {str(e)}")
+
+@app.get("/viral-load-trend/")
+def get_viral_load_trend():
+    """Generate viral load trend by filtering and processing registration list and viral load report."""
+    global registration_df, viral_load_df
+    if registration_df is None or viral_load_df is None:
+        raise HTTPException(status_code=400, detail="Both registration list and viral load report must be uploaded.")
+    try:
+        # Step 1: Filter registration_df for POSITIVE ovchivstatus
+        calhiv_df = registration_df[registration_df['ovchivstatus'] == 'POSITIVE']
+
+        # Step 2: Select required columns from both datasets
+        calhiv_columns = calhiv_df[['cpims_ovc_id', 'viral_load', 'date_of_event']] 
+        vl_columns = viral_load_df[['cpims_ovc_id', 'viral_load', 'date_of_event']]  
+
+        # Step 3: Merge the datasets on cpims_ovc_id
+        merged_vl = pd.concat([calhiv_columns, vl_columns], ignore_index=True)
+
+        # Step 4: Sort by date_of_event (latest to oldest)
+        merged_vl = merged_vl.sort_values(by='date_of_event', ascending=False)
+
+        # Step 5: Remove duplicates by cpims_ovc_id and date_of_event
+        merged_vl = merged_vl.drop_duplicates(subset=['cpims_ovc_id'], keep='first')
+
+
+        # Function to categorize viral_load values
+        def categorize_viral_load(row):
+            if pd.isna(row['date_of_event']):
+                return 'missing vl'
+            elif pd.isna(row['viral_load']):
+                return 'a.LDL'
+            elif row['viral_load'] <= 49:
+                return 'a.LDL'
+            elif row['viral_load'] <= 199:
+                return 'b.50-199'
+            elif row['viral_load'] <= 999:
+                return 'c.200-999 (unsuppressed)'
+            else:
+                return 'd.1000+ (suspected treatment failure)'
+
+        # Apply the function to each row to create a new column
+        merged_vl['vl_suppression'] = merged_vl.apply(categorize_viral_load, axis=1)
+
+        calhiv_viral_load = (
+            merged_vl[merged_vl['viral_load'] > 199]  # Step 1: Filter viral_load > 199
+           .drop_duplicates(subset=['cpims_ovc_id', 'date_of_event'])  # Step 2: Remove duplicates
+           .dropna(subset='date_of_event') # Step 3: Remove rows with blanks in date_of_event
+        )
+
+        # Step 6: Group by time period and calculate viral load trends
+        calhiv_viral_load['year'] = pd.to_datetime(calhiv_viral_load['date_of_event']).dt.year
+
+        calhiv_viral_load['year'] = calhiv_viral_load['year'].astype(int)
+
+        # Filter data for years 2021 and later
+        calhiv_viral_load = (
+            calhiv_viral_load[calhiv_viral_load['year'] >= 2021]
+            .sort_values(by='year', ascending=False)
+            .drop_duplicates(subset=['cpims_ovc_id', 'year'])
+        )
+
+        # Group the data
+        trend_data = calhiv_viral_load.groupby('year')['vl_suppression'].count().reset_index()
+
+        # Convert Period to string for JSON serialization
+        trend_data['year'] = trend_data['year'].astype(int)
+
+        return trend_data.to_dict(orient='records')
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating viral load trend: {str(e)}")
+
 
 @app.get("/filters/")
 def get_filters():
     """Retrieve unique filter values."""
+    global registration_df
+    if registration_df is None:
+        raise HTTPException(status_code=400, detail="No data uploaded yet.")
     try:
         unique_lips = sorted(registration_df["lip"].dropna().unique().tolist())
 
@@ -75,11 +178,14 @@ def get_summaries(
     ward: list[str] = Query(default=[])
 ):
     """Retrieve filtered summary data."""
+    global registration_df
+    if registration_df is None:
+        raise HTTPException(status_code=400, detail="No data uploaded yet.")
     try:
         filtered_df = registration_df.copy()
 
         # Apply filters
-        if lip and "Project" not in lip:
+        if lip and "Project" not in lip:  # Exclude "Project" from filtering
             filtered_df = filtered_df[filtered_df['lip'].isin(lip)]
         if constituency:
             filtered_df = filtered_df[filtered_df['constituency'].isin(constituency)]
@@ -147,6 +253,10 @@ def get_summaries(
             },
         }
 
+
+        # CALHIV summary
+
+        # Return
         return {
             "exit_reasons": exit_reasons,
             "birth_cert_uptake": birth_cert_uptake,
