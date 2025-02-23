@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Health App</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        .filters {
+            margin-bottom: 20px;
+        }
+        .results {
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Health Data Summary</h1>
+    <div class="filters">
+        <label for="ward">Ward:</label>
+        <select id="ward">
+            <option value="Ward1">Ward 1</option>
+            <option value="Ward2">Ward 2</option>
+        </select>
+        <label for="constituency">Constituency:</label>
+        <select id="constituency">
+            <option value="Constituency1">Constituency 1</option>
+            <option value="Constituency2">Constituency 2</option>
+        </select>
+        <button onclick="fetchData()">Get Summary</button>
+    </div>
+    <div class="results">
+        <h2>Results</h2>
+        <p>Total Active: <span id="total-active">0</span></p>
+        <p>With Birth Certificates: <span id="birth-cert-count">0</span></p>
+    </div>
+
+    <script>
+        async function fetchData() {
+            const ward = document.getElementById('ward').value;
+            const constituency = document.getElementById('constituency').value;
+            
+            const response = await fetch(`/api/summary?ward=${ward}&constituency=${constituency}`);
+            const data = await response.json();
+            
+            // Display results
+            document.getElementById('total-active').textContent = data.total_active;
+            document.getElementById('birth-cert-count').textContent = data.birth_cert_count;
+        }
+    </script>
+</body>
+</html>
