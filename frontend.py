@@ -89,7 +89,7 @@ if st.sidebar.button("Apply Filters"):
                                         )
                                     )
                     
-                # OVC Eligible for Reporting Summaries
+                # OVC Eligible for Reporting Summary
                 if "category_summary" in summary_data:
                     st.subheader("OVC Eligible for Reporting Summaries")
                     df_summary = pd.DataFrame([
