@@ -14,13 +14,13 @@ Use the filters to explore specific **LIPs, constituencies, and wards**.
 """)
 
 # Backend URL
-BACKEND_URL = "http://127.0.0.1:8000"
+BACKEND_URL = "http://127.0.0.1:8000"  # Update this if your backend is hosted elsewhere
 
 def fetch_data(endpoint, params=None):
     """Fetch data from the backend API."""
     try:
         response = requests.get(f"{BACKEND_URL}/{endpoint}", params=params)
-        response.raise_for_status()
+        response.raise_for_status()  # Raise an error for bad status codes
         return response.json()
     except requests.exceptions.RequestException as e:
         st.error(f"Error connecting to backend: {e}")
@@ -29,22 +29,26 @@ def fetch_data(endpoint, params=None):
 # File Upload
 uploaded_file = st.file_uploader("Upload Registration List (CSV)", type="csv")
 if uploaded_file is not None:
-    files = {"file": uploaded_file}
-    response = requests.post(f"{BACKEND_URL}/upload/", files=files)
-    if response.status_code == 200:
+    try:
+        files = {"file": uploaded_file}
+        response = requests.post(f"{BACKEND_URL}/upload/", files=files)
+        response.raise_for_status()
         st.success("File uploaded successfully!")
-    else:
-        st.error(f"Error uploading file: {response.json().get('detail', 'Unknown error')}")
+    except requests.exceptions.RequestException as e:
+        st.error(f"Error uploading file: {e}")
 
 # File Upload for Viral Load Report
 viral_load_file = st.file_uploader("Upload Viral Load Report (CSV)", type="csv")
 if viral_load_file is not None:
-    files = {"file": viral_load_file}
-    response = requests.post(f"{BACKEND_URL}/upload-viral-load/", files=files)
-    if response.status_code == 200:
+    try:
+        files = {"file": viral_load_file}
+        response = requests.post(f"{BACKEND_URL}/upload-viral-load/", files=files)
+        response.raise_for_status()
         st.success("Viral load file uploaded successfully!")
-    else:
-        st.error(f"Error uploading viral load file: {response.json().get('detail', 'Unknown error')}")
+    except requests.exceptions.RequestException as e:
+        st.error(f"Error uploading viral load file: {e}")
+
+
 
 # Get filter options only if a file is uploaded
 if uploaded_file is not None:
